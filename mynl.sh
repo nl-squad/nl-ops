@@ -81,7 +81,11 @@ load_connection() {
     if [ -z "$ssh_key" ]; then
         ssh_key=$(config .connection.keyPath)
     fi
-    ssh_options=(-i "$ssh_key" -o "UserKnownHostsFile=\"$script_dir/known_hosts\"" -o StrictHostKeyChecking=yes)
+    # ControlPath lives in ~/.ssh, which must exist.
+    (umask 077 && mkdir -p "$HOME/.ssh")
+    ssh_options=(-i "$ssh_key" -o "UserKnownHostsFile=\"$script_dir/known_hosts\"" -o StrictHostKeyChecking=yes
+        -o ControlMaster=auto -o "ControlPath=\"$HOME/.ssh/mynl-%C\"" -o ControlPersist=60
+        -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
     rsync_ssh="ssh$(printf " '%s'" "${ssh_options[@]}")"
     ssh_target="$user@$address"
 }
@@ -122,8 +126,27 @@ load_rcon_password() {
     fi
 }
 
+# udp_exchange <address> <port> <first reply wait>: sends stdin as one datagram and prints the replies
+# until none arrives for 0.25s. A wait of 0 sends without reading a reply.
+udp_exchange() {
+    perl -MIO::Socket::IP -MIO::Select -e '
+        my ($host, $port, $wait) = @ARGV;
+        my $packet = do { local $/; <STDIN> };
+        my $socket = IO::Socket::IP->new(PeerHost => $host, PeerPort => $port, Proto => "udp") or exit 1;
+        $socket->send($packet);
+        my $select = IO::Select->new($socket);
+        binmode STDOUT;
+        while ($wait > 0 && $select->can_read($wait)) {
+            my $buffer;
+            defined $socket->recv($buffer, 65535) or last;
+            print $buffer;
+            $wait = 0.25;
+        }
+    ' "$1" "$2" "$3"
+}
+
 server_execute() {
-    local cmd="$1" password="${2:-}" packet="$1" display="$1" address port response
+    local cmd="$1" password="${2:-}" reply_wait="${3:-1}" packet="$1" display="$1" address port response
     address=$(config .connection.address) || exit 1
     port=$(profile_config cod2.port) || exit 1
     if [ -n "$password" ]; then
@@ -132,9 +155,9 @@ server_execute() {
     fi
     echo "Executing command '$display' for server $address:$port." >&2
 
-    # nc fails when the server is down; callers treat an empty response as offline
+    # An unreachable server gives an empty response; callers treat that as offline
     response=$(printf '\377\377\377\377%s' "$packet" \
-        | nc -u -w 2 "$address" "$port" \
+        | udp_exchange "$address" "$port" "$reply_wait" \
         | perl -pe 's/\xff{4}print//g' \
         | LC_ALL=C tr -cd '\11\12\15\40-\176') || true
     echo "$response"
@@ -200,7 +223,7 @@ deploy() {
     excludes=$(profile_config 'rsyncExclude // [] | .[]')
     cfg_file=$(profile_config 'cod2.cfgFile // ""')
 
-    rsync_options=(-az -e "$rsync_ssh" --progress --delete)
+    rsync_options=(-az --checksum -e "$rsync_ssh" --progress --delete)
     while IFS= read -r exclude; do
         if [ -n "$exclude" ]; then
             rsync_options+=("--exclude=$exclude")
@@ -250,7 +273,7 @@ announce() {
         echo "Skipping announcement - no rcon password found"
         return
     fi
-    server_execute "say $1" "$password" > /dev/null
+    server_execute "say $1" "$password" 0 > /dev/null
 }
 
 restart() {
@@ -378,38 +401,79 @@ unpack() {
     done
 }
 
+pack_iwd() {
+    local iwd_folder="$1" iwds_path="$2" iwd_name iwd_path temp_dir subfolder entry tmp_iwd_path
+    iwd_name=$(basename "$iwd_folder")
+    iwd_path="$iwds_path/$iwd_name"
+    temp_dir="iwds/$iwd_name.temp"
+    mkdir -p "$temp_dir"
+
+    for subfolder in "$iwd_folder"*/; do
+        for entry in "$subfolder"*; do
+            cp -R "$entry" "$temp_dir/"
+        done
+    done
+
+    tmp_iwd_path="$(realpath iwds)/$iwd_name.tmp"
+    find "$temp_dir" -type f -exec touch -t 202201010000.00 {} +
+    (cd "$temp_dir" && find . -type f \! -name ".DS_Store" | sort | zip -q -X -r -@ "$tmp_iwd_path")
+    rm -rf "$temp_dir"
+
+    if cmp -s "$tmp_iwd_path" "$iwd_path"; then
+        rm "$tmp_iwd_path"
+        echo "Unchanged: $iwd_path"
+    else
+        mv "$tmp_iwd_path" "$iwd_path"
+        echo "Packed: $iwd_path"
+    fi
+}
+
+kill_tree() {
+    local child
+    for child in $(pgrep -P "$1"); do
+        kill_tree "$child"
+    done
+    kill "$1" 2> /dev/null || true
+}
+
+# Background jobs ignore Ctrl+C in a script, so an interrupted pack stops them and removes their temp files.
+stop_pack_jobs() {
+    local i
+    for i in "${!pids[@]}"; do
+        kill_tree "${pids[i]}"
+    done
+    rm -rf iwds/*.iwd.temp iwds/*.iwd.tmp
+}
+
+# Each iwd is zipped in its own background job; output is printed in glob order once each job ends.
 pack() {
-    local iwds_path iwd_folder iwd_name iwd_path temp_dir subfolder entry tmp_iwd_path
+    local iwds_path iwd_folder log_dir pids=() i failed=0
+    if [ ! -d iwds ]; then
+        echo "Skipping pack - no iwds directory"
+        return
+    fi
     iwds_path=$(profile_config cod2.iwdsPath)
 
     echo "Packing directories from 'iwds' to '$iwds_path' iwd files"
+    log_dir=$(mktemp -d)
+    trap 'stop_pack_jobs; rm -rf "$log_dir"; exit 130' INT TERM
     shopt -s nullglob
     for iwd_folder in iwds/*.iwd/; do
-        iwd_name=$(basename "$iwd_folder")
-        iwd_path="$iwds_path/$iwd_name"
-        temp_dir="iwds/$iwd_name.temp"
-        mkdir -p "$temp_dir"
-
-        for subfolder in "$iwd_folder"*/; do
-            for entry in "$subfolder"*; do
-                cp -R "$entry" "$temp_dir/"
-            done
-        done
-
-        tmp_iwd_path="$(realpath iwds)/$iwd_name.tmp"
-        find "$temp_dir" -type f -exec touch -t 202201010000.00 {} +
-        (cd "$temp_dir" && find . -type f \! -name ".DS_Store" | sort | zip -q -X -r -@ "$tmp_iwd_path")
-        rm -rf "$temp_dir"
-
-        if cmp -s "$tmp_iwd_path" "$iwd_path"; then
-            rm "$tmp_iwd_path"
-            echo "Unchanged: $iwd_path"
-        else
-            mv "$tmp_iwd_path" "$iwd_path"
-            echo "Packed: $iwd_path"
-        fi
+        pack_iwd "$iwd_folder" "$iwds_path" > "$log_dir/${#pids[@]}.out" 2> "$log_dir/${#pids[@]}.err" &
+        pids+=("$!")
     done
     shopt -u nullglob
+
+    for i in "${!pids[@]}"; do
+        wait "${pids[i]}" || failed=1
+        cat "$log_dir/$i.out"
+        cat "$log_dir/$i.err" >&2
+    done
+    trap - INT TERM
+    rm -rf "$log_dir"
+    if [ "$failed" -ne 0 ]; then
+        die "Packing failed."
+    fi
 }
 
 sync_server() {
