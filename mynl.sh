@@ -378,10 +378,12 @@ status() {
 }
 
 pack_iwd() {
-    local iwd_folder="$1" iwds_path="$2" iwd_name iwd_path temp_dir subfolder entry tmp_iwd_path
+    local iwd_folder="$1" iwd_path="$2" iwd_name temp_dir stamp subfolder entry tmp_iwd_path
     iwd_name=$(basename "$iwd_folder")
-    iwd_path="$iwds_path/$iwd_name"
     temp_dir="iwds/$iwd_name.temp"
+    # The .iwd gets the copy start time, so a source edited while packing is still newer next time.
+    stamp="iwds/$iwd_name.stamp"
+    touch "$stamp"
     mkdir -p "$temp_dir"
 
     for subfolder in "$iwd_folder"*/; do
@@ -402,6 +404,8 @@ pack_iwd() {
         mv "$tmp_iwd_path" "$iwd_path"
         echo "Packed: $iwd_path"
     fi
+    touch -r "$stamp" "$iwd_path"
+    rm "$stamp"
 }
 
 kill_tree() {
@@ -418,12 +422,12 @@ stop_pack_jobs() {
     for i in "${!pids[@]}"; do
         kill_tree "${pids[i]}"
     done
-    rm -rf iwds/*.iwd.temp iwds/*.iwd.tmp
+    rm -rf iwds/*.iwd.temp iwds/*.iwd.tmp iwds/*.iwd.stamp
 }
 
-# Each iwd is zipped in its own background job; output is printed in glob order once each job ends.
+# Each remaining iwd is zipped in its own background job; its result is printed after the skip lines, in glob order.
 pack() {
-    local iwds_path iwd_folder log_dir pids=() i failed=0
+    local iwds_path iwd_folder iwd_path log_dir pids=() i failed=0
     if [ ! -d iwds ]; then
         echo "Skipping pack - no iwds directory"
         return
@@ -435,7 +439,13 @@ pack() {
     trap 'stop_pack_jobs; rm -rf "$log_dir"; exit 130' INT TERM
     shopt -s nullglob
     for iwd_folder in iwds/*.iwd/; do
-        pack_iwd "$iwd_folder" "$iwds_path" > "$log_dir/${#pids[@]}.out" 2> "$log_dir/${#pids[@]}.err" &
+        iwd_path="$iwds_path/$(basename "$iwd_folder")"
+        # Folder mtimes count too, so a deleted source file forces a repack.
+        if [ -f "$iwd_path" ] && [ -z "$(find "$iwd_folder" -newer "$iwd_path" -print -quit)" ]; then
+            echo "Skipped: $iwd_path (up to date)"
+            continue
+        fi
+        pack_iwd "$iwd_folder" "$iwd_path" > "$log_dir/${#pids[@]}.out" 2> "$log_dir/${#pids[@]}.err" &
         pids+=("$!")
     done
     shopt -u nullglob
