@@ -9,7 +9,8 @@ Both read `project-definition.json` from the project directory; start from [samp
 ## Commands
 
 - `connect [command]` - open an ssh session on the machine, or run the command there
-- `deploy` - pack `iwds/<name>.iwd/<any folder>/…` into `<iwdsPath>/<name>.iwd`, rsync to the server and announce the update; reload with `exec map_restart`. An `.iwd` is repacked only when something in its source folder is newer; delete the `.iwd` to force it
+- `deploy` - pack the iwds, rsync to the server and announce the update; reload with `exec map_restart`
+  - packs `iwds/<name>.iwd/<any folder>/…` into `<iwdsPath>/<name>.iwd`, only when something in the source folder is newer; delete the `.iwd` to force a repack
 - `restart` - remove the docker stack and start it again
 - `stop` - print the last logs and remove the docker stack
 - `logs [follow|lines]` - print or follow the server logs
