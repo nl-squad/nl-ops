@@ -8,7 +8,7 @@ Both read `project-definition.json` from the project directory; start from [samp
 
 ## Commands
 
-- `connect` - open an ssh session on the machine
+- `connect [command]` - open an ssh session on the machine, or run the command there
 - `deploy` - rsync the local files to the server
 - `restart` - remove the docker stack and start it again
 - `stop` - print the last logs and remove the docker stack
@@ -20,6 +20,8 @@ Both read `project-definition.json` from the project directory; start from [samp
 - `release-version <version>` / `finalize-version <version>` - release management
 
 The `default` profile is used unless you set another one with `export PROFILE=<name>`.
+
+Passwords for the active profile come from `RCON_PASSWORD` and `G_PASSWORD`, otherwise from `./secrets` (see [secrets-example](secrets-example)). Set `G_PASSWORD=" "` for no password. `release-version` requires both env vars unset. `MYNL_SSH_KEY` overrides `connection.keyPath`. SSH host keys are pinned in [known_hosts](known_hosts).
 
 ## Requirements
 

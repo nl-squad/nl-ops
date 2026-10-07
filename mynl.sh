@@ -2,6 +2,7 @@
 set -euo pipefail
 
 project_definition="project-definition.json"
+script_dir=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 
 die() {
     echo "Error: $*" >&2
@@ -49,7 +50,7 @@ echo_colorize() {
 print_usage() {
     cat <<'EOF'
 Control commands:
-mynl connect                      Connects to the machine.
+mynl connect [command]            Connects to the machine, or runs the command there.
 mynl deploy                       Syncs current content.
 mynl restart                      Removes the docker stack and starts it again with restart.sh.
 mynl stop                         Prints the last logs and removes the docker stack.
@@ -76,43 +77,63 @@ load_connection() {
     local user address
     user=$(config .connection.user)
     address=$(config .connection.address)
-    ssh_key=$(config .connection.keyPath)
+    ssh_key="${MYNL_SSH_KEY:-}"
+    if [ -z "$ssh_key" ]; then
+        ssh_key=$(config .connection.keyPath)
+    fi
+    ssh_options=(-i "$ssh_key" -o "UserKnownHostsFile=\"$script_dir/known_hosts\"" -o StrictHostKeyChecking=yes)
+    rsync_ssh="ssh$(printf " '%s'" "${ssh_options[@]}")"
     ssh_target="$user@$address"
 }
 
+# Remote commands are built locally on purpose.
+# shellcheck disable=SC2029
 exec_ssh() {
     load_connection
     if [ "$1" = "-t" ]; then
-        ssh -i "$ssh_key" -t "$ssh_target" "$2"
+        ssh "${ssh_options[@]}" -t "$ssh_target" "$2"
     else
-        ssh -i "$ssh_key" "$ssh_target" "$1"
+        ssh "${ssh_options[@]}" "$ssh_target" "$1"
     fi
 }
 
-load_secrets() {
-    # shellcheck source=/dev/null
-    source ./secrets
-    local rcon_password_var="${profile}_rcon_password" g_password_var="${profile}_g_password"
-    rcon_password="${!rcon_password_var:-}"
-    g_password="${!g_password_var:-}"
-
-    if [ -z "$rcon_password" ]; then
-        die "rcon_password not set for profile '$profile'."
+# Env wins over ./secrets; set-but-empty env counts as unset. Prints nothing when neither has the value.
+secret() {
+    local env_name="$1" secrets_name="${profile}_$2"
+    if [ -n "${!env_name:-}" ]; then
+        printf '%s' "${!env_name}"
+    elif [ -f ./secrets ]; then
+        # shellcheck source=/dev/null
+        (source ./secrets && printf '%s' "${!secrets_name:-}")
     fi
+}
+
+missing_secret() {
+    if [ -f ./secrets ]; then
+        die "$2 not set for profile '$profile': set $1 or add ${profile}_$2 to ./secrets."
+    fi
+    die "$1 is not set and ./secrets does not exist."
+}
+
+load_rcon_password() {
+    rcon_password=$(secret RCON_PASSWORD rcon_password)
     if [ -z "${rcon_password// /}" ]; then
-        die "rcon_password is empty or contains only whitespace."
+        missing_secret RCON_PASSWORD rcon_password
     fi
 }
 
 server_execute() {
-    local cmd="$1" address port obfuscated_cmd response
+    local cmd="$1" password="${2:-}" packet="$1" display="$1" address port response
     address=$(config .connection.address) || exit 1
     port=$(profile_config cod2.port) || exit 1
-    obfuscated_cmd=$(echo "$cmd" | perl -pe 's/(rcon) (\w+) (.+)/\1 ***** \3/g')
-    echo "Executing command '$obfuscated_cmd' for server $address:$port." >&2
+    if [ -n "$password" ]; then
+        packet="rcon $password $cmd"
+        display="rcon ***** $cmd"
+    fi
+    echo "Executing command '$display' for server $address:$port." >&2
 
     # nc fails when the server is down; callers treat an empty response as offline
-    response=$(printf '\377\377\377\377%s' "$cmd" \
+    response=$(printf '\377\377\377\377%s' "$packet" \
         | nc -u -w 2 "$address" "$port" \
         | perl -pe 's/\xff{4}print//g' \
         | LC_ALL=C tr -cd '\11\12\15\40-\176') || true
@@ -120,45 +141,37 @@ server_execute() {
 }
 
 rcon_execute() {
-    load_secrets
-    server_execute "rcon $rcon_password $1"
+    load_rcon_password
+    server_execute "$1" "$rcon_password"
 }
 
 info_value() {
     awk -F "\\\\" -v key="$1" '{for (i=1; i<=NF; i++) if ($i == key) print $(i+1)}'
 }
 
-sed_in_place() {
-    sed -i.sed-bak "$1" "$2"
-    rm "$2.sed-bak"
+load_cfg_passwords() {
+    load_rcon_password
+    g_password=$(secret G_PASSWORD g_password)
+    # A missing g_password in ./secrets means no password; env-only runs must set G_PASSWORD.
+    if [ -z "$g_password" ] && [ ! -f ./secrets ]; then
+        missing_secret G_PASSWORD g_password
+    fi
 }
 
-write_server_cfg() {
-    local cfg_file="$1" cfg_path="src/nl/$1"
-    if [ -z "$cfg_file" ]; then
-        return
+# Passwords reach perl through the environment, so no character in them needs escaping.
+render_server_cfg() {
+    local g_value="$g_password"
+    if [ "$g_value" = " " ]; then
+        g_value=""
     fi
-    cp "$cfg_path" "$cfg_file.bak"
-
-    if [ "$g_password" != " " ]; then
-        echo "Setting g_password"
-        sed_in_place "s/set g_password \".*\"/set g_password \"$g_password\"/" "$cfg_path"
-    else
-        echo "Clearing g_password"
-        sed_in_place 's/set g_password ".*"/set g_password ""/' "$cfg_path"
-    fi
-
-    echo "Setting rcon_password"
-    sed_in_place "s/set rcon_password \".*\"/set rcon_password \"$rcon_password\"/" "$cfg_path"
-}
-
-restore_server_cfg() {
-    local cfg_file="$1"
-    if [ -z "$cfg_file" ]; then
-        return
-    fi
-    cp "$cfg_file.bak" "src/nl/$cfg_file"
-    rm "$cfg_file.bak"
+    MYNL_CFG_G_PASSWORD="$g_value" MYNL_CFG_RCON_PASSWORD="$rcon_password" perl -e '
+        open(my $in, "<", $ARGV[0]) or die "$ARGV[0]: $!\n";
+        while (<$in>) {
+            s/set g_password ".*"/set g_password "$ENV{MYNL_CFG_G_PASSWORD}"/;
+            s/set rcon_password ".*"/set rcon_password "$ENV{MYNL_CFG_RCON_PASSWORD}"/;
+            print;
+        }
+    ' "$1"
 }
 
 service_name() {
@@ -168,47 +181,76 @@ service_name() {
 }
 
 connect() {
-    local address remote_path
-    address=$(config .connection.address)
+    local remote_command="$1" address remote_path
     remote_path=$(profile_config remoteDeploymentPath)
+    if [ -n "$remote_command" ]; then
+        exec_ssh "cd $remote_path && $remote_command"
+        return
+    fi
+    address=$(config .connection.address)
     echo "Connecting to $address SSH"
     exec_ssh -t "cd $remote_path ; bash --login"
 }
 
 deploy() {
-    local remote_path local_path excludes exclude cfg_file rsync_options rsync_status=0
+    local remote_path local_path excludes exclude cfg_file cfg_path rendered_cfg remote_cfg rsync_options
     load_connection
     remote_path=$(profile_config remoteDeploymentPath)
     local_path=$(profile_config localDeploymentPath)
     excludes=$(profile_config 'rsyncExclude // [] | .[]')
     cfg_file=$(profile_config 'cod2.cfgFile // ""')
-    load_secrets
 
-    rsync_options=(-az -e "ssh -i $ssh_key" --progress --delete)
+    rsync_options=(-az -e "$rsync_ssh" --progress --delete)
     while IFS= read -r exclude; do
         if [ -n "$exclude" ]; then
             rsync_options+=("--exclude=$exclude")
         fi
     done <<< "$excludes"
 
-    write_server_cfg "$cfg_file"
-    (cd "$local_path" && rsync "${rsync_options[@]}" ./* "$ssh_target:$remote_path") || rsync_status=$?
-    restore_server_cfg "$cfg_file"
-    if [ "$rsync_status" -ne 0 ]; then
-        exit "$rsync_status"
+    if [ -n "$cfg_file" ]; then
+        cfg_path="$local_path/nl/$cfg_file"
+        if [ ! -f "$cfg_path" ]; then
+            die "$cfg_path not found."
+        fi
+        load_cfg_passwords
+        # The trailing x keeps the file's final newlines, which $(...) would strip.
+        rendered_cfg=$(render_server_cfg "$cfg_path" && printf x)
+        rendered_cfg=${rendered_cfg%x}
+        if [ -z "$rendered_cfg" ]; then
+            die "$cfg_path rendered empty."
+        fi
+        if [ "$g_password" = " " ]; then
+            echo "Clearing g_password"
+        else
+            echo "Setting g_password"
+        fi
+        echo "Setting rcon_password"
+        rsync_options+=("--exclude=/nl/$cfg_file")
+    fi
+
+    (cd "$local_path" && rsync "${rsync_options[@]}" ./* "$ssh_target:$remote_path")
+
+    if [ -n "$cfg_file" ]; then
+        remote_cfg="$remote_path/nl/$cfg_file"
+        printf '%s' "$rendered_cfg" | exec_ssh "cat > $remote_cfg.tmp && mv $remote_cfg.tmp $remote_cfg"
     fi
 
     announce "^8[UPDATE] ^7Mod version updated"
 }
 
 announce() {
-    local port
+    local port password
     port=$(profile_config 'cod2.port // ""')
     if [ -z "$port" ]; then
         echo "Skipping announcement - no cod2 port found"
         return
     fi
-    rcon_execute "say $1" > /dev/null
+    password=$(secret RCON_PASSWORD rcon_password)
+    if [ -z "${password// /}" ]; then
+        echo "Skipping announcement - no rcon password found"
+        return
+    fi
+    server_execute "say $1" "$password" > /dev/null
 }
 
 restart() {
@@ -402,6 +444,9 @@ release_version() {
     if [ -z "$new_version" ]; then
         die "New version number required to release."
     fi
+    if [ -n "${RCON_PASSWORD:-}${G_PASSWORD:-}" ]; then
+        die "release-version deploys to the public profile; unset RCON_PASSWORD and G_PASSWORD so it reads ./secrets."
+    fi
     git checkout main
     git pull
     git checkout -b "version/$new_version"
@@ -431,7 +476,7 @@ fi
 use_profile "${PROFILE:-default}"
 
 case "$command" in
-    connect) connect ;;
+    connect) connect "${*:2}" ;;
     deploy) deploy ;;
     restart) restart ;;
     stop) stop ;;
