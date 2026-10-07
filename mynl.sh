@@ -51,14 +51,13 @@ print_usage() {
     cat <<'EOF'
 Control commands:
 mynl connect [command]            Connects to the machine, or runs the command there.
-mynl deploy                       Syncs current content.
+mynl deploy                       Packs, syncs current content and announces the update (no map reload).
 mynl restart                      Removes the docker stack and starts it again with restart.sh.
 mynl stop                         Prints the last logs and removes the docker stack.
 mynl logs follow                  Attaches to project log stream.
 mynl logs [tail-lines]            Prints all or last n lines of logs.
 mynl history [index=1]            Prints tail of 1=last shutdown instance, 2=second last.
 mynl pack                         Packs the iwds/ directories into iwd files.
-mynl sync                         The one to rule them all - packs, deploys, restarts map or fully restarts if required.
 mynl release <version>            Tags the previous version, branches version/<version> from main, deploys to public.
 
 Server commands:
@@ -213,6 +212,7 @@ connect() {
 
 deploy() {
     local remote_path local_path excludes exclude cfg_file cfg_path rendered_cfg remote_cfg rsync_options
+    pack
     load_connection
     remote_path=$(profile_config remoteDeploymentPath)
     local_path=$(profile_config localDeploymentPath)
@@ -452,21 +452,6 @@ pack() {
     fi
 }
 
-sync_server() {
-    local hostname
-    hostname=$(server_execute "getstatus" | info_value sv_hostname)
-
-    pack
-    deploy
-
-    if [ -n "$hostname" ]; then
-        rcon_execute "map_restart"
-        show_logs follow
-    else
-        restart
-    fi
-}
-
 finalize_previous_version() {
     local previous
     previous=$(git for-each-ref --format='%(refname:strip=4)' 'refs/remotes/origin/version/*' | sort -V | tail -n 1)
@@ -502,7 +487,6 @@ release() {
     git pull
     git checkout -b "version/$new_version"
     git push -u origin "version/$new_version"
-    pack
     use_profile public
     deploy
     echo "Released $new_version to the public server."
@@ -514,7 +498,7 @@ case "$command" in
         print_usage
         die "Missing verb"
         ;;
-    connect | deploy | restart | stop | logs | history | status | exec | pack | sync | release) ;;
+    connect | deploy | restart | stop | logs | history | status | exec | pack | release) ;;
     *)
         print_usage
         die "Invalid verb '$command'"
@@ -536,6 +520,5 @@ case "$command" in
     status) status ;;
     exec) rcon_execute "${*:2}" ;;
     pack) pack ;;
-    sync) sync_server ;;
     release) release "${2:-}" ;;
 esac
