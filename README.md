@@ -9,7 +9,7 @@ Both read `project-definition.json` from the project directory; start from [samp
 ## Commands
 
 - `connect [command]` - open an ssh session on the machine, or run the command there
-- `deploy` - pack, rsync the local files to the server and announce the update (no map reload: use `exec map_restart` or `restart`)
+- `deploy` - pack, rsync to the server and announce the update; reload with `exec map_restart`
 - `restart` - remove the docker stack and start it again
 - `stop` - print the last logs and remove the docker stack
 - `logs [follow|lines]` - print or follow the server logs
