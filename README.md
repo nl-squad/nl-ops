@@ -14,7 +14,7 @@ Both read `project-definition.json` from the project directory; start from [samp
 - `stop` - print the last logs and remove the docker stack
 - `logs [follow|lines]` - print or follow the server logs
 - `history [index]` - print the logs of a stopped container
-- `pack` - pack `iwds/<name>.iwd/<any folder>/…` into `<iwdsPath>/<name>.iwd`
+- `pack` - pack `iwds/<name>.iwd/<any folder>/…` into `<iwdsPath>/<name>.iwd`. An `.iwd` is skipped when nothing in its source folder is newer; delete the `.iwd` to force a repack
 - `status` - print the map and players (no rcon password needed)
 - `exec <command>` - run an RCON command, e.g. `exec status` or `exec map_restart`
 - `release <version>` - tag the previous version, branch `version/<version>` from main, deploy to public
@@ -46,6 +46,8 @@ Reusable workflows in [.github/workflows](.github/workflows). Each one runs `myn
 | restart | `logs 500`, `history`, `restart` | `profile` |
 | stop | `stop` | `profile` |
 | save-logs | `logs 500`, `history` | `profile` |
+
+Deploy caches the packed `.iwd` files with `actions/cache`, keyed by the git tree hash of `iwds/`, so unchanged iwds are not packed again.
 
 Pass secrets with `secrets: inherit`. The `public` profile uses the `PUBLIC_` ones, every other profile the `DEV_` ones.
 
