@@ -51,8 +51,8 @@ print_usage() {
 Control commands:
 mynl connect                      Connects to the machine.
 mynl deploy                       Syncs current content.
-mynl restart                      Executes restart.sh on remote machine.
-mynl restart detached             Executes restart.sh on remote machine with detached mode.
+mynl restart                      Removes the docker stack and starts it again with restart.sh.
+mynl stop                         Prints the last logs and removes the docker stack.
 mynl logs follow                  Attaches to project log stream.
 mynl logs [tail-lines]            Prints all or last n lines of logs.
 mynl history [index=1]            Prints tail of 1=last shutdown instance, 2=second last.
@@ -64,11 +64,8 @@ mynl finalize-version <version>   Finalizes development of a version by tagging 
 
 RCON commands:
 mynl getstatus                    Gets public server status (without using rcon password).
-mynl serverinfo                   Prints server information.
 mynl status                       Prints the status of the server.
 mynl mapres                       Restarts the map on server.
-mynl rotate                       Rotates the map on server to the next one.
-mynl map <map-name>               Changes map to requested one.
 mynl exec <command>               Performs given command on the server.
 
 To change profile use 'export PROFILE=myprofile'
@@ -85,7 +82,11 @@ load_connection() {
 
 exec_ssh() {
     load_connection
-    ssh -i "$ssh_key" -t "$ssh_target" "$1"
+    if [ "$1" = "-t" ]; then
+        ssh -i "$ssh_key" -t "$ssh_target" "$2"
+    else
+        ssh -i "$ssh_key" "$ssh_target" "$1"
+    fi
 }
 
 load_secrets() {
@@ -166,16 +167,12 @@ service_name() {
     echo "${project}_${project}"
 }
 
-task_container_id() {
-    docker inspect --format '{{.Status.ContainerStatus.ContainerID}}' "$1"
-}
-
 connect() {
     local address remote_path
     address=$(config .connection.address)
     remote_path=$(profile_config remoteDeploymentPath)
     echo "Connecting to $address SSH"
-    exec_ssh "cd $remote_path ; bash --login"
+    exec_ssh -t "cd $remote_path ; bash --login"
 }
 
 deploy() {
@@ -201,46 +198,97 @@ deploy() {
         exit "$rsync_status"
     fi
 
-    rcon_execute "say ^8[UPDATE] ^7Mod version updated" > /dev/null
+    announce "^8[UPDATE] ^7Mod version updated"
+}
+
+announce() {
+    local port
+    port=$(profile_config 'cod2.port // ""')
+    if [ -z "$port" ]; then
+        echo "Skipping announcement - no cod2 port found"
+        return
+    fi
+    rcon_execute "say $1" > /dev/null
 }
 
 restart() {
-    local restart_path restart_docker_compose
+    local restart_path restart_docker_compose project
     restart_path=$(profile_config restartPath)
     restart_docker_compose=$(profile_config restartDockerCompose)
-    exec_ssh "cd $restart_path && ./restart.sh $restart_docker_compose"
+    project=$(profile_config containerName)
+
+    announce "^8[UPDATE] ^7Server restart dispatched, please use ^3/reconnect"
+    exec_ssh "$(cat <<EOF
+cd $restart_path || exit 1
+echo 'Removing stack $project...'
+docker stack rm --detach=false $project || echo 'Failed to remove stack'
+./restart.sh $restart_docker_compose
+EOF
+)"
+}
+
+stop() {
+    local project service
+    project=$(profile_config containerName)
+    service=$(service_name)
+
+    announce "^8[UPDATE] ^9Server is ^7stopping"
+    exec_ssh "$(cat <<EOF
+container_id=\$(docker ps -q --filter label=com.docker.swarm.service.name=$service | head -n 1)
+if [ -n "\$container_id" ]; then
+    docker logs --tail 500 "\$container_id"
+else
+    echo 'No running container'
+fi
+echo 'Executing docker stack rm...'
+docker stack rm $project
+EOF
+)"
 }
 
 show_logs() {
-    local mode="$1" logs_args=(logs) service task_id container_id
+    local mode="$1" logs_options="" service remote_command
     if [ "$mode" = "follow" ]; then
-        logs_args+=(-f)
+        logs_options="-f"
     elif [[ $mode =~ ^[0-9]+$ ]]; then
-        logs_args+=(--tail "$mode")
+        logs_options="--tail $mode"
     fi
 
     service=$(service_name)
-    task_id=$(docker service ps "$service" --filter "desired-state=running" --format "{{.ID}}" -q)
-    if [ -n "$task_id" ]; then
-        container_id=$(task_container_id "$task_id")
-        docker "${logs_args[@]}" "$container_id"
+    remote_command=$(cat <<EOF
+container_id=\$(docker ps -q --filter label=com.docker.swarm.service.name=$service | head -n 1)
+if [ -n "\$container_id" ]; then
+    docker logs $logs_options "\$container_id"
+else
+    echo 'Warning: Container not found - printing service logs'
+    docker service logs $logs_options $service --raw
+fi
+EOF
+)
+    if [ "$mode" = "follow" ]; then
+        exec_ssh -t "$remote_command"
     else
-        echo "Warning: Container not found - printing service logs"
-        docker service "${logs_args[@]}" "$service" --raw
+        exec_ssh "$remote_command"
     fi
 }
 
 show_history() {
-    local skip="$1" service task_id container_id
-    if ! [[ $skip =~ ^[0-9]+$ ]]; then
+    local index="$1" service
+    if ! [[ $index =~ ^[1-9][0-9]*$ ]]; then
         die "Argument must be a positive number"
     fi
     service=$(service_name)
-    task_id=$(docker service ps -f "desired-state=shutdown" "$service" --format "{{.ID}}" -q | tail -n +"$skip" | head -n 1)
-    echo "task_id=${task_id}"
-    container_id=$(task_container_id "$task_id")
-    echo "container_id=${container_id}"
-    docker logs --tail 200 "$container_id"
+
+    exec_ssh "$(cat <<EOF
+container_id=\$(docker ps -a -q --filter label=com.docker.swarm.service.name=$service --filter status=exited | sed -n '${index}p')
+if [ -z "\$container_id" ]; then
+    echo 'Error: No stopped container number $index for $service' >&2
+    exit 1
+fi
+echo "container_id=\$container_id"
+docker logs --tail 200 "\$container_id"
+EOF
+)"
 }
 
 getstatus() {
@@ -253,8 +301,7 @@ getstatus() {
     player_count=$(echo "$players_list" | awk 'NF {n++} END {print n+0}')
 
     if [ -z "$current_map" ] || [ -z "$hostname" ]; then
-        echo "Error: Could not retrieve the required information from the CoD2 server." >&2
-        return
+        die "Could not retrieve the required information from the CoD2 server."
     fi
 
     echo "-------------------"
@@ -371,7 +418,7 @@ case "$command" in
         print_usage
         die "Missing verb"
         ;;
-    connect | deploy | restart | logs | history | serverinfo | status | getstatus | mapres | rotate | map | exec | unpack | pack | sync | finalize-version | release-version) ;;
+    connect | deploy | restart | stop | logs | history | status | getstatus | mapres | exec | unpack | pack | sync | finalize-version | release-version) ;;
     *)
         print_usage
         die "Invalid verb '$command'"
@@ -387,14 +434,12 @@ case "$command" in
     connect) connect ;;
     deploy) deploy ;;
     restart) restart ;;
+    stop) stop ;;
     logs) show_logs "${2:-}" ;;
     history) show_history "${2:-1}" ;;
-    serverinfo) rcon_execute "serverinfo" ;;
     status) rcon_execute "status" ;;
     getstatus) getstatus ;;
     mapres) rcon_execute "map_restart" ;;
-    rotate) rcon_execute "map_rotate" ;;
-    map) rcon_execute "map ${2:-}" ;;
     exec) rcon_execute "${*:2}" ;;
     unpack) unpack ;;
     pack) pack ;;

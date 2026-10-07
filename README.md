@@ -6,20 +6,24 @@ Both read `project-definition.json` from the project directory; start from [samp
 
 # 🌱 mynl CLI
 
-## Features
+## Commands
 
-- direct connect
-- deploying the local repository version
-- restarting the remote server
-- getting logs
-- reloading the current map
-- rotating the current map
-- changing to any given map
-- executing a remote command as RCON
-- getting info and status
-- creating .iwd files
-- unpacking .iwd files
-- release management
+- `connect` - open an ssh session on the machine
+- `deploy` - rsync the local files to the server
+- `restart` - remove the docker stack and start it again
+- `stop` - print the last logs and remove the docker stack
+- `sync` - pack, deploy, then restart the map (or the whole server if it is down)
+- `logs [follow|lines]` - print or follow the server logs
+- `history [index]` - print the logs of a stopped container
+- `pack` / `unpack` - build `.iwd` files from `iwds/`, or unpack them there
+- `getstatus`, `status`, `mapres`, `exec <command>` - query or control the server over RCON
+- `release-version <version>` / `finalize-version <version>` - release management
+
+The `default` profile is used unless you set another one with `export PROFILE=<name>`.
+
+## Requirements
+
+bash, jq, rsync, ssh, nc, perl, git and zip/unzip.
 
 ## Installation
 
