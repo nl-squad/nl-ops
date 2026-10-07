@@ -9,10 +9,9 @@ Both read `project-definition.json` from the project directory; start from [samp
 ## Commands
 
 - `connect [command]` - open an ssh session on the machine, or run the command there
-- `deploy` - rsync the local files to the server
+- `deploy` - pack, rsync the local files to the server and announce the update (no map reload: use `exec map_restart` or `restart`)
 - `restart` - remove the docker stack and start it again
 - `stop` - print the last logs and remove the docker stack
-- `sync` - pack, deploy, then restart the map (or the whole server if it is down)
 - `logs [follow|lines]` - print or follow the server logs
 - `history [index]` - print the logs of a stopped container
 - `pack` - pack `iwds/<name>.iwd/<any folder>/…` into `<iwdsPath>/<name>.iwd`
@@ -43,7 +42,7 @@ Reusable workflows in [.github/workflows](.github/workflows). Each one runs `myn
 
 | Workflow | Runs | Inputs |
 |---|---|---|
-| deploy | `pack`, `deploy`, `connect <run_after>` | `profile`, `ref` (optional), `run_after` (optional) |
+| deploy | `deploy`, `connect <run_after>` | `profile`, `ref` (optional), `run_after` (optional) |
 | restart | `logs 500`, `history`, `restart` | `profile` |
 | stop | `stop` | `profile` |
 | save-logs | `logs 500`, `history` | `profile` |
