@@ -1,8 +1,12 @@
-# 🚢 nl-cli-tool
+# 🚢 nl-ops
 
-Tool for NL servers management and control. Created because of a lack of public tools for managing CoD2 servers. The settings should be defined in a `project-definition.json` file. You can create one basing on the example [sample.project-definition.json](https://github.com/nl-squad/nl-cli-tool/blob/main/sample.project-definition.json).
+Tools for managing NL CoD2 servers: the `mynl` CLI and shared GitHub Actions workflows.
 
-# 🌱 Features for managing a remote server
+Both read `project-definition.json` from the project directory; start from [sample.project-definition.json](sample.project-definition.json).
+
+# 🌱 mynl CLI
+
+## Features
 
 - direct connect
 - deploying the local repository version
@@ -17,11 +21,38 @@ Tool for NL servers management and control. Created because of a lack of public 
 - unpacking .iwd files
 - release management
 
-# 🛫 Installation
+## Installation
 
-Just clone this repository and create the link and alias as in the example below.
+Clone this repository and create the link and alias:
 
 ```sh
 sudo ln -s $(pwd)/mynl.sh /usr/local/bin/mynl.sh
 alias mynl='mynl.sh'
 ```
+
+# 🦩 Shared workflows
+
+Reusable workflows in [.github/workflows](.github/workflows):
+
+- deploy - put files on the remote machine
+- restart - start or restart CoD2 server
+- stop - stop CoD2 server
+- save-logs - print logs of the running and the last crashed container
+
+Use them from another repository:
+
+```yaml
+jobs:
+  deploy:
+    uses: nl-squad/nl-ops/.github/workflows/deploy.yml@main
+    with:
+      profile: default
+      branch: main
+    secrets: inherit
+```
+
+# 🔗 Integrated servers
+
+- [nl-cod2-library](https://github.com/nl-squad/nl-cod2-library)
+- [nl-cod2-zom-scripts](https://github.com/nl-squad/nl-cod2-zom-scripts) (private)
+- [nl-cod2-zom-iwds](https://github.com/nl-squad/nl-cod2-zom-iwds)
