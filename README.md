@@ -42,7 +42,7 @@ Reusable workflows in [.github/workflows](.github/workflows). Each one runs `myn
 
 | Workflow | Runs | Inputs |
 |---|---|---|
-| deploy | `pack` (if `iwds/` exists), `deploy` | `profile`, `ref` (optional, defaults to the triggering commit) |
+| deploy | `pack` (if `iwds/` exists), `deploy`, `connect <run_after>` | `profile`, `ref` (optional, defaults to the triggering commit), `run_after` (optional command run on the server in `remoteDeploymentPath`) |
 | restart | `logs 500`, `history`, `restart` | `profile` |
 | stop | `stop` | `profile` |
 | save-logs | `logs 500`, `history` | `profile` |

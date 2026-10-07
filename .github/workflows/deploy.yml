@@ -10,6 +10,10 @@ on:
         description: Caller commit, branch or tag to deploy (default is the triggering commit)
         required: false
         type: string
+      run_after:
+        description: Command to run on the server after deploy, in remoteDeploymentPath
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -43,7 +47,9 @@ jobs:
           VPS_PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
           RCON_PASSWORD: ${{ secrets[format('{0}_RCON_PASSWORD', inputs.profile == 'public' && 'PUBLIC' || 'DEV')] }}
           G_PASSWORD: ${{ secrets[format('{0}_G_PASSWORD', inputs.profile == 'public' && 'PUBLIC' || 'DEV')] }}
+          RUN_AFTER: ${{ inputs.run_after }}
         run: |
           (umask 077 && printf '%s\n' "$VPS_PRIVATE_KEY" > "$MYNL_SSH_KEY")
           if [ -d iwds ]; then .nl-ops/mynl.sh pack; fi
           .nl-ops/mynl.sh deploy
+          if [ -n "$RUN_AFTER" ]; then .nl-ops/mynl.sh connect "$RUN_AFTER"; fi
