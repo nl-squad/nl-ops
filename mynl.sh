@@ -57,17 +57,13 @@ mynl stop                         Prints the last logs and removes the docker st
 mynl logs follow                  Attaches to project log stream.
 mynl logs [tail-lines]            Prints all or last n lines of logs.
 mynl history [index=1]            Prints tail of 1=last shutdown instance, 2=second last.
-mynl unpack                       Unpacks all iwd files and places them in iwds/ directory.
-mynl pack                         Packs the unpacked iwd files.
+mynl pack                         Packs the iwds/ directories into iwd files.
 mynl sync                         The one to rule them all - packs, deploys, restarts map or fully restarts if required.
-mynl release-version <version>    Releases a new version by creating a branch from main, deploying, and setting up for public.
-mynl finalize-version <version>   Finalizes development of a version by tagging and pushing the tag to the repository.
+mynl release <version>            Tags the previous version, branches version/<version> from main, deploys to public.
 
-RCON commands:
-mynl getstatus                    Gets public server status (without using rcon password).
-mynl status                       Prints the status of the server.
-mynl mapres                       Restarts the map on server.
-mynl exec <command>               Performs given command on the server.
+Server commands:
+mynl status                       Prints the map and players (no rcon password needed).
+mynl exec <command>               Performs an RCON command on the server, e.g. 'exec status' or 'exec map_restart'.
 
 To change profile use 'export PROFILE=myprofile'
 EOF
@@ -356,7 +352,7 @@ EOF
 )"
 }
 
-getstatus() {
+status() {
     local response current_map hostname players_list player_count player player_score player_name
     response=$(server_execute "getstatus")
 
@@ -379,26 +375,6 @@ getstatus() {
         player_name=$(echo "$player" | cut -d' ' -f3- | tr -d '"')
         echo_colorize "Name: $player_name ^7| Score: ^2$player_score"
     done <<< "$players_list"
-}
-
-unpack() {
-    local iwds_path iwd_file target_folder
-    iwds_path=$(profile_config cod2.iwdsPath)
-
-    if [ -d iwds ]; then
-        die "The iwds directory exists. Firstly remove it or pack using 'mynl pack'."
-    fi
-
-    echo "Unpacking iwd files from '$iwds_path' to 'iwds' directory"
-    for iwd_file in "$iwds_path"/*.iwd; do
-        if [ ! -f "$iwd_file" ]; then
-            die "No iwd files found in '$iwds_path'."
-        fi
-        target_folder="iwds/$(basename "$iwd_file")/all"
-        mkdir -p "$target_folder"
-        unzip -q "$iwd_file" -d "$target_folder"
-        echo "Unpacked: $iwd_file"
-    done
 }
 
 pack_iwd() {
@@ -491,26 +467,37 @@ sync_server() {
     fi
 }
 
-finalize_version() {
-    local version="$1"
-    if [ -z "$version" ]; then
-        die "Version number required to finalize."
+finalize_previous_version() {
+    local previous
+    previous=$(git for-each-ref --format='%(refname:strip=4)' 'refs/remotes/origin/version/*' | sort -V | tail -n 1)
+    if [ -z "$previous" ] || git ls-remote --exit-code --tags origin "refs/tags/$previous" > /dev/null; then
+        echo "No untagged previous version to finalize"
+        return
     fi
-    git checkout "version/$version"
+    git checkout "version/$previous"
     git pull
-    git tag "$version"
-    git push --tags
-    echo "Finalized version $version and pushed tags to remote."
+    if ! git rev-parse -q --verify "refs/tags/$previous" > /dev/null; then
+        git tag "$previous"
+    fi
+    git push origin "refs/tags/$previous"
+    echo "Finalized version $previous"
 }
 
-release_version() {
+release() {
     local new_version="$1"
     if [ -z "$new_version" ]; then
-        die "New version number required to release."
+        die "Version number required to release."
     fi
     if [ -n "${RCON_PASSWORD:-}${G_PASSWORD:-}" ]; then
-        die "release-version deploys to the public profile; unset RCON_PASSWORD and G_PASSWORD so it reads ./secrets."
+        die "release deploys to the public profile; unset RCON_PASSWORD and G_PASSWORD so it reads ./secrets."
     fi
+    git fetch --tags origin
+    if git rev-parse -q --verify "refs/heads/version/$new_version" > /dev/null \
+        || git rev-parse -q --verify "refs/remotes/origin/version/$new_version" > /dev/null; then
+        die "Branch version/$new_version already exists."
+    fi
+
+    finalize_previous_version
     git checkout main
     git pull
     git checkout -b "version/$new_version"
@@ -527,7 +514,7 @@ case "$command" in
         print_usage
         die "Missing verb"
         ;;
-    connect | deploy | restart | stop | logs | history | status | getstatus | mapres | exec | unpack | pack | sync | finalize-version | release-version) ;;
+    connect | deploy | restart | stop | logs | history | status | exec | pack | sync | release) ;;
     *)
         print_usage
         die "Invalid verb '$command'"
@@ -546,13 +533,9 @@ case "$command" in
     stop) stop ;;
     logs) show_logs "${2:-}" ;;
     history) show_history "${2:-1}" ;;
-    status) rcon_execute "status" ;;
-    getstatus) getstatus ;;
-    mapres) rcon_execute "map_restart" ;;
+    status) status ;;
     exec) rcon_execute "${*:2}" ;;
-    unpack) unpack ;;
     pack) pack ;;
     sync) sync_server ;;
-    finalize-version) finalize_version "${2:-}" ;;
-    release-version) release_version "${2:-}" ;;
+    release) release "${2:-}" ;;
 esac

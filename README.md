@@ -15,17 +15,18 @@ Both read `project-definition.json` from the project directory; start from [samp
 - `sync` - pack, deploy, then restart the map (or the whole server if it is down)
 - `logs [follow|lines]` - print or follow the server logs
 - `history [index]` - print the logs of a stopped container
-- `pack` / `unpack` - build `.iwd` files from `iwds/`, or unpack them there
-- `getstatus`, `status`, `mapres`, `exec <command>` - query or control the server over RCON
-- `release-version <version>` / `finalize-version <version>` - release management
+- `pack` - pack `iwds/<name>.iwd/<any folder>/…` into `<iwdsPath>/<name>.iwd`
+- `status` - print the map and players (no rcon password needed)
+- `exec <command>` - run an RCON command, e.g. `exec status` or `exec map_restart`
+- `release <version>` - tag the previous version, branch `version/<version>` from main, deploy to public
 
 The `default` profile is used unless you set another one with `export PROFILE=<name>`.
 
-Passwords for the active profile come from `RCON_PASSWORD` and `G_PASSWORD`, otherwise from `./secrets` (see [secrets-example](secrets-example)). Set `G_PASSWORD=" "` for no password. `release-version` requires both env vars unset. `MYNL_SSH_KEY` overrides `connection.keyPath`. SSH host keys are pinned in [known_hosts](known_hosts).
+Passwords for the active profile come from `RCON_PASSWORD` and `G_PASSWORD`, otherwise from `./secrets` (see [secrets-example](secrets-example)). Set `G_PASSWORD=" "` for no password. `release` requires both env vars unset. `MYNL_SSH_KEY` overrides `connection.keyPath`. SSH host keys are pinned in [known_hosts](known_hosts).
 
 ## Requirements
 
-bash, jq, rsync, ssh, perl, git and zip/unzip.
+bash, jq, rsync, ssh, perl, git and zip.
 
 ## Installation
 
