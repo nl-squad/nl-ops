@@ -1,4 +1,4 @@
-name: Restart server
+name: Restart
 
 on:
   workflow_call:
@@ -7,204 +7,38 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   restart:
-    name: Restart the server
+    name: Restart
     runs-on: ubuntu-latest
-
+    concurrency:
+      group: nl-ops-${{ inputs.profile }}
+      cancel-in-progress: false
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v2
-
-    - name: Send message to server
-      run: |
-        project_definition="project-definition.json"
-        if [ ! -f $project_definition ]; then
-            echo "Error: $project_definition doesn't exist."
-            exit 1
-        fi
-
-        function extract_value_or_exit() {
-          local key=$1
-          local value=$(jq -r "$key" "$project_definition")
-
-          if [ "$value" = "null" ]; then
-              echo "Error: $key not found in the $project_definition file."
-              exit 1
-          fi
-
-          echo "$value"
-        }
-
-        ###
-
-        profile=${{ inputs.profile }}
-        rcon=$(extract_value_or_exit ".profiles.\"$profile\".cod2.rconPassword") || { echo "Skipping - no rcon password found"; exit 0; }
-        cod2_port=$(extract_value_or_exit ".profiles.\"$profile\".cod2.port") || { echo "Skipping - no cod2 port found"; exit 0; }
-        connection_address=$(extract_value_or_exit '.connection.address')
-
-        cmd="say ^8[UPDATE] ^7Server restart dispatched, please use ^3/reconnect"
-        echo "Executing command '$cmd' for server $connection_address:$cod2_port"
-        echo -n -e "\xff\xff\xff\xffrcon $rcon $cmd" | nc -u -w 2 $connection_address $cod2_port
-
-    - name: Get current running container logs
-      run: |
-        project_definition="project-definition.json"
-        if [ ! -f $project_definition ]; then
-            echo "Error: $project_definition doesn't exist. Please use mynl CLI tool from within NL directory."
-            exit 1
-        fi
-
-        function extract_value_or_exit() {
-          local key=$1
-          local value=$(jq -r "$key" "$project_definition")
-
-          if [ "$value" = "null" ]; then
-              echo "Error: $key not found in the $project_definition file."
-              exit 1
-          fi
-
-          echo "$value"
-        }
-
-        ###
-
-        profile=${{ inputs.profile }}
-        execute_path=$(extract_value_or_exit ".profiles.\"$profile\".restartPath")
-        execute_docker_compose=$(extract_value_or_exit ".profiles.\"$profile\".restartDockerCompose")
-        connection_address=$(extract_value_or_exit '.connection.address')
-        connection_user=$(extract_value_or_exit '.connection.user')
-        project=$(extract_value_or_exit ".profiles.\"$profile\".containerName")
-        service=${project}_${project}
-        connection_key_path=~/private_key
-        echo "Executing at location $execute_path, host: $connection_user@$connection_address"
-
-        echo "${{ secrets.VPS_PRIVATE_KEY }}" > $connection_key_path
-        chmod 600 $connection_key_path
-        echo "Private key set up"
-
-        ssh -i $connection_key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $connection_user@$connection_address "\
-          cd $execute_path && \
-          if ! docker service inspect $service >/dev/null 2>&1; then \
-            echo 'Service '$service' does not exist yet - skipping logs'; \
-          else \
-            echo 'Getting task_id for service '$service && \
-            task_id=\$(docker service ps $service --filter 'desired-state=running' --format '{{.ID}}' -q) && \
-            if [ ! -z \"\$task_id\" ]; then \
-              echo 'Getting container_id for task '\$task_id && \
-              container_id=\$(docker inspect --format '{{.Status.ContainerStatus.ContainerID}}' \$task_id) && \
-              echo 'Displaying logs for container '\$container_id && \
-              docker logs --tail 500 \$container_id; \
-            else \
-              echo 'No currently running container'; \
-            fi; \
-          fi"
-
-        rm -f $connection_key_path
-      env:
-        PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
-
-    - name: Get crash logs from recent failed container
-      run: |
-        project_definition="project-definition.json"
-        if [ ! -f $project_definition ]; then
-            echo "Error: $project_definition doesn't exist. Please use mynl CLI tool from within NL directory."
-            exit 1
-        fi
-
-        function extract_value_or_exit() {
-          local key=$1
-          local value=$(jq -r "$key" "$project_definition")
-
-          if [ "$value" = "null" ]; then
-              echo "Error: $key not found in the $project_definition file."
-              exit 1
-          fi
-
-          echo "$value"
-        }
-
-        ###
-
-        profile=${{ inputs.profile }}
-        execute_path=$(extract_value_or_exit ".profiles.\"$profile\".restartPath")
-        execute_docker_compose=$(extract_value_or_exit ".profiles.\"$profile\".restartDockerCompose")
-        connection_address=$(extract_value_or_exit '.connection.address')
-        connection_user=$(extract_value_or_exit '.connection.user')
-        project=$(extract_value_or_exit ".profiles.\"$profile\".containerName")
-        service=${project}_${project}
-        connection_key_path=~/private_key
-        echo "Executing at location $execute_path, host: $connection_user@$connection_address"
-
-        echo "${{ secrets.VPS_PRIVATE_KEY }}" > $connection_key_path
-        chmod 600 $connection_key_path
-        echo "Private key set up"
-
-        ssh -i $connection_key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $connection_user@$connection_address "\
-          cd $execute_path && \
-          echo 'Checking for recent crashes...' && \
-          if ! docker service inspect $service >/dev/null 2>&1; then \
-            echo 'Service '$service' does not exist yet - skipping crash logs'; \
-          else \
-            failed_task=\$(docker service ps $service --filter 'desired-state=shutdown' --format '{{.ID}} {{.CurrentState}}' | head -1) && \
-            if [ ! -z \"\$failed_task\" ]; then \
-              task_id=\$(echo \$failed_task | awk '{print \$1}') && \
-              state_info=\$(echo \$failed_task | cut -d' ' -f2-) && \
-              failed_container=\$(docker inspect --format '{{.Status.ContainerStatus.ContainerID}}' \$task_id) && \
-              docker logs --tail 500 \$failed_container && \
-              echo 'This is the crash: '\$state_info; \
-            else \
-              echo 'No recent crashes found'; \
-            fi; \
-          fi"
-
-        rm -f $connection_key_path
-      env:
-        PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
-
-    - name: Send restart command
-      run: |
-        project_definition="project-definition.json"
-        if [ ! -f $project_definition ]; then
-            echo "Error: $project_definition doesn't exist. Please use mynl CLI tool from within NL directory."
-            exit 1
-        fi
-
-        function extract_value_or_exit() {
-          local key=$1
-          local value=$(jq -r "$key" "$project_definition")
-
-          if [ "$value" = "null" ]; then
-              echo "Error: $key not found in the $project_definition file."
-              exit 1
-          fi
-
-          echo "$value"
-        }
-
-        ###
-
-        profile=${{ inputs.profile }}
-        execute_path=$(extract_value_or_exit ".profiles.\"$profile\".restartPath")
-        execute_docker_compose=$(extract_value_or_exit ".profiles.\"$profile\".restartDockerCompose")
-        connection_address=$(extract_value_or_exit '.connection.address')
-        connection_user=$(extract_value_or_exit '.connection.user')
-        project=$(extract_value_or_exit ".profiles.\"$profile\".containerName")
-        service=${project}_${project}
-        connection_key_path=~/private_key
-        echo "Executing at location $execute_path, host: $connection_user@$connection_address"
-
-        echo "${{ secrets.VPS_PRIVATE_KEY }}" > $connection_key_path
-        chmod 600 $connection_key_path
-        echo "Private key set up"
-
-        ssh -i $connection_key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $connection_user@$connection_address "\
-          cd $execute_path && \
-          echo 'Removing stack '$project'...' && \
-          docker stack rm $project || echo 'Failed to remove stack' && \
-          echo 'Executing ./restart.sh...' && \
-          ./restart.sh $execute_docker_compose"
-
-        rm -f $connection_key_path
-      env:
-        PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: /project-definition.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .nl-ops
+          sparse-checkout: |
+            /mynl.sh
+            /known_hosts
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Restart
+        env:
+          PROFILE: ${{ inputs.profile }}
+          MYNL_SSH_KEY: ${{ runner.temp }}/vps_key
+          VPS_PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
+          RCON_PASSWORD: ${{ secrets[format('{0}_RCON_PASSWORD', inputs.profile == 'public' && 'PUBLIC' || 'DEV')] }}
+        run: |
+          (umask 077 && printf '%s\n' "$VPS_PRIVATE_KEY" > "$MYNL_SSH_KEY")
+          .nl-ops/mynl.sh restart
