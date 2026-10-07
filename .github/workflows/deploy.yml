@@ -47,6 +47,6 @@ jobs:
           RUN_AFTER: ${{ inputs.run_after }}
         run: |
           (umask 077 && printf '%s\n' "$VPS_PRIVATE_KEY" > "$MYNL_SSH_KEY")
-          if [ -d iwds ]; then .nl-ops/mynl.sh pack; fi
+          .nl-ops/mynl.sh pack
           .nl-ops/mynl.sh deploy
           if [ -n "$RUN_AFTER" ]; then .nl-ops/mynl.sh connect "$RUN_AFTER"; fi

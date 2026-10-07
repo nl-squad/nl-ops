@@ -25,7 +25,7 @@ Passwords for the active profile come from `RCON_PASSWORD` and `G_PASSWORD`, oth
 
 ## Requirements
 
-bash, jq, rsync, ssh, nc, perl, git and zip/unzip.
+bash, jq, rsync, ssh, perl, git and zip/unzip.
 
 ## Installation
 
@@ -42,7 +42,7 @@ Reusable workflows in [.github/workflows](.github/workflows). Each one runs `myn
 
 | Workflow | Runs | Inputs |
 |---|---|---|
-| deploy | `pack` (if `iwds/` exists), `deploy`, `connect <run_after>` | `profile`, `ref` (optional), `run_after` (optional) |
+| deploy | `pack`, `deploy`, `connect <run_after>` | `profile`, `ref` (optional), `run_after` (optional) |
 | restart | `logs 500`, `history`, `restart` | `profile` |
 | stop | `stop` | `profile` |
 | save-logs | `logs 500`, `history` | `profile` |
