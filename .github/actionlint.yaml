@@ -1,0 +1,5 @@
+# actionlint does not know job.workflow_* yet: https://github.com/rhysd/actionlint/issues/647
+paths:
+  .github/workflows/*.yml:
+    ignore:
+      - 'property "workflow_(sha|repository)" is not defined'

@@ -25,7 +25,7 @@ Passwords for the active profile come from `RCON_PASSWORD` and `G_PASSWORD`, oth
 
 ## Requirements
 
-bash, jq, rsync, ssh, nc, perl, git and zip/unzip.
+bash, jq, rsync, ssh, perl, git and zip/unzip.
 
 ## Installation
 
@@ -38,14 +38,20 @@ alias mynl='mynl.sh'
 
 # 🦩 Shared workflows
 
-Reusable workflows in [.github/workflows](.github/workflows):
+Reusable workflows in [.github/workflows](.github/workflows). Each one runs `mynl.sh` from the same nl-ops commit as the workflow, in the root of the caller repository.
 
-- deploy - put files on the remote machine
-- restart - start or restart CoD2 server
-- stop - stop CoD2 server
-- save-logs - print logs of the running and the last crashed container
+| Workflow | Runs | Inputs |
+|---|---|---|
+| deploy | `pack`, `deploy`, `connect <run_after>` | `profile`, `ref` (optional), `run_after` (optional) |
+| restart | `logs 500`, `history`, `restart` | `profile` |
+| stop | `stop` | `profile` |
+| save-logs | `logs 500`, `history` | `profile` |
 
-Use them from another repository:
+Pass secrets with `secrets: inherit`. The `public` profile uses the `PUBLIC_` ones, every other profile the `DEV_` ones.
+
+- `VPS_PRIVATE_KEY` - all workflows
+- `DEV_RCON_PASSWORD` / `PUBLIC_RCON_PASSWORD` - deploy, restart and stop of a profile with `cod2.port`. Without it, the in-game announcement is skipped. Deploy of a profile with `cod2.cfgFile` requires it.
+- `DEV_G_PASSWORD` / `PUBLIC_G_PASSWORD` - deploy of a profile with `cod2.cfgFile`; `" "` means no password
 
 ```yaml
 jobs:
@@ -53,7 +59,6 @@ jobs:
     uses: nl-squad/nl-ops/.github/workflows/deploy.yml@main
     with:
       profile: default
-      branch: main
     secrets: inherit
 ```
 

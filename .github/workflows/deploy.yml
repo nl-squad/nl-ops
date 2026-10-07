@@ -1,4 +1,4 @@
-name: Deployment
+name: Deploy
 
 on:
   workflow_call:
@@ -6,198 +6,47 @@ on:
       profile:
         required: true
         type: string
-      branch:
-        required: true
-        type: string
-      sha:
+      ref:
+        description: Caller commit, branch or tag to deploy (default is the triggering commit)
         required: false
         type: string
-      pack:
-        required: false
-        type: boolean
-        default: false
-      set_passwords:
-        required: false
-        type: boolean
-        default: false
-      cfg_file:
+      run_after:
+        description: Command to run on the server after deploy, in remoteDeploymentPath
         required: false
         type: string
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
-    name: Deploy server files
+    name: Deploy
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v2
-      with:
-        ref: ${{ inputs.sha || github.event.inputs.branch || 'main' }}
-
-    - name: Set passwords based on profile
-      id: set-passwords
-      run: |
-        if [ "${{ inputs.profile }}" == "public" ]; then
-          echo "Using PUBLIC passwords"
-          echo "rcon_password=${{ secrets.PUBLIC_RCON_PASSWORD }}" >> $GITHUB_ENV
-          echo "g_password=${{ secrets.PUBLIC_G_PASSWORD }}" >> $GITHUB_ENV
-        else
-          echo "Using DEV passwords"
-          echo "rcon_password=${{ secrets.DEV_RCON_PASSWORD }}" >> $GITHUB_ENV
-          echo "g_password=${{ secrets.DEV_G_PASSWORD }}" >> $GITHUB_ENV
-        fi
-
-    - name: Send message to server
-      run: |
-        project_definition="project-definition.json"
-        if [ ! -f $project_definition ]; then
-            echo "Error: $project_definition doesn't exist."
-            exit 1
-        fi
-
-        function extract_value_or_exit() {
-          local key=$1
-          local value=$(jq -r "$key" "$project_definition")
-
-          if [ "$value" = "null" ]; then
-              echo "Error: $key not found in the $project_definition file."
-              exit 1
-          fi
-
-          echo "$value"
-        }
-
-        ###
-
-        profile=${{ inputs.profile }}
-        rcon=$rcon_password
-        cod2_port=$(extract_value_or_exit ".profiles.\"$profile\".cod2.port") || { echo "Skipping - no cod2 port found"; exit 0; }
-        connection_address=$(extract_value_or_exit '.connection.address')
-
-        cmd="say ^8[UPDATE] ^7Continous deployment ^9updated mod version"
-        echo "Executing command '$cmd' for server $connection_address:$cod2_port"
-        echo -n -e "\xff\xff\xff\xffrcon $rcon $cmd" | nc -u -w 2 $connection_address $cod2_port
-
-    - name: Build .iwd files
-      if: ${{ inputs.pack }}
-      run: |
-        project_definition="project-definition.json"
-        if [ ! -f $project_definition ]; then
-            echo "Error: $project_definition doesn't exist. Please use mynl CLI tool from within NL directory."
-            exit 1
-        fi
-
-        function extract_value_or_exit() {
-          local key=$1
-          local value=$(jq -r "$key" "$project_definition")
-
-          if [ "$value" = "null" ]; then
-              echo "Error: $key not found in the $project_definition file."
-              exit 1
-          fi
-
-          echo "$value"
-        }
-
-        ###
-
-        profile=${{ inputs.profile }}
-        iwds_path=$(extract_value_or_exit ".profiles.\"$profile\".cod2.iwdsPath") || { echo $iwds_path; exit $?; }
-
-        echo "Packing directories from 'iwds' to '$iwds_path' iwd files"
-        for iwd_folder in iwds/*.iwd/; do
-            base_foldername=$(basename "$iwd_folder")
-            tmp_iwd_path=$(realpath "iwds/$base_foldername.tmp")
-            iwd_path="$iwds_path/$base_foldername"
-
-            temp_dir="iwds/$base_foldername.temp"
-            mkdir -p "$temp_dir"
-
-            for subfolder in "$iwd_folder"*; do
-                for inner_subfolder in "$subfolder"/*; do
-                    relative_path="${inner_subfolder#$subfolder/}"
-                    mkdir -p "$temp_dir/$relative_path"
-                    cp -R "$inner_subfolder/"* "$temp_dir/$relative_path"
-                done
-            done
-
-            find "$temp_dir" -type f -exec touch -t 202201010000.00 {} +
-            (cd "$temp_dir" && find . -type f \! -name ".DS_Store" | sort | zip -q -X -r -@ "$tmp_iwd_path")
-
-            rm -rf "$temp_dir"
-
-            new_iwd_sha=$(sha256sum $tmp_iwd_path | awk '{print $1}')
-            old_iwd_sha=$(sha256sum $iwd_path | awk '{print $1}')
-
-            if [[ "$new_iwd_sha" != "$old_iwd_sha" ]]; then
-                mv $tmp_iwd_path $iwd_path
-                echo "Packed: $iwd_path"    
-            else
-                rm $tmp_iwd_path
-                echo "Unchanged: $iwd_path"
-            fi
-        done
-
-    - name: Set g_password
-      if: ${{ inputs.set_passwords }}
-      run: |
-        if [ "$g_password" != " " ]; then
-          echo "Setting g_password"
-          sed -i "s/set g_password \".*\"/set g_password \"$g_password\"/" src/nl/${{ inputs.cfg_file }}
-        else
-          echo "Clearing g_password"
-          sed -i 's/set g_password ".*"/set g_password ""/' src/nl/${{ inputs.cfg_file }}
-        fi
-
-    - name: Set rcon_password
-      if: ${{ inputs.set_passwords }}
-      run: |
-        echo "Setting rcon_password"
-        sed -i "s/set rcon_password \".*\"/set rcon_password \"$rcon_password\"/" src/nl/${{ inputs.cfg_file }}
-      
-    - name: Deploy server files
-      run: |
-        project_definition="project-definition.json"
-        if [ ! -f $project_definition ]; then
-            echo "Error: $project_definition doesn't exist. Please use mynl CLI tool from within NL directory."
-            exit 1
-        fi
-
-        function extract_value_or_exit() {
-          local key=$1
-          local value=$(jq -r "$key" "$project_definition")
-
-          if [ "$value" = "null" ]; then
-              echo "Error: $key not found in the $project_definition file."
-              exit 1
-          fi
-
-          echo "$value"
-        }
-
-        ###
-
-        profile=${{ inputs.profile }}
-        connection_address=$(extract_value_or_exit '.connection.address')
-        connection_user=$(extract_value_or_exit '.connection.user')
-        connection_key_path=~/private_key
-        deployment_remote_path=$(extract_value_or_exit ".profiles.\"$profile\".remoteDeploymentPath")
-        deployment_local_path=$(extract_value_or_exit ".profiles.\"$profile\".localDeploymentPath")
-        exclude_list=($(jq -r ".profiles.\"$profile\".rsyncExclude | .[]" "$project_definition"))
-        for exclude_item in "${exclude_list[@]}"; do
-          exclude_options+=("--exclude=$exclude_item")
-        done
-        echo "Deploying from: $deployment_local_path"
-        echo "Deploying to: $connection_user@$connection_address:$deployment_remote_path"
-
-        echo "${{ secrets.VPS_PRIVATE_KEY }}" > $connection_key_path
-        chmod 600 $connection_key_path
-        echo "Private key set up"
-
-        echo "rsync -az -e \"ssh -i $connection_key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\" --progress --delete ${exclude_options[@]} ./* $connection_user@$connection_address:$deployment_remote_path"
-        (cd $deployment_local_path && rsync -az -e "ssh -i $connection_key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" --progress --delete ${exclude_options[@]} ./* $connection_user@$connection_address:$deployment_remote_path)
-
-        rm -f $connection_key_path
-      env:
-        PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .nl-ops
+          sparse-checkout: |
+            /mynl.sh
+            /known_hosts
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Deploy
+        env:
+          PROFILE: ${{ inputs.profile }}
+          MYNL_SSH_KEY: ${{ runner.temp }}/vps_key
+          VPS_PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
+          RCON_PASSWORD: ${{ secrets[format('{0}_RCON_PASSWORD', inputs.profile == 'public' && 'PUBLIC' || 'DEV')] }}
+          G_PASSWORD: ${{ secrets[format('{0}_G_PASSWORD', inputs.profile == 'public' && 'PUBLIC' || 'DEV')] }}
+          RUN_AFTER: ${{ inputs.run_after }}
+        run: |
+          (umask 077 && printf '%s\n' "$VPS_PRIVATE_KEY" > "$MYNL_SSH_KEY")
+          .nl-ops/mynl.sh pack
+          .nl-ops/mynl.sh deploy
+          if [ -n "$RUN_AFTER" ]; then .nl-ops/mynl.sh connect "$RUN_AFTER"; fi
