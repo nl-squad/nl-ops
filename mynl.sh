@@ -57,7 +57,6 @@ mynl stop                         Prints the last logs and removes the docker st
 mynl logs follow                  Attaches to project log stream.
 mynl logs [tail-lines]            Prints all or last n lines of logs.
 mynl history [index=1]            Prints tail of 1=last shutdown instance, 2=second last.
-mynl pack                         Packs the iwds/ directories into iwd files.
 mynl release <version>            Tags the previous version, branches version/<version> from main, deploys to public.
 
 Server commands:
@@ -508,7 +507,7 @@ case "$command" in
         print_usage
         die "Missing verb"
         ;;
-    connect | deploy | restart | stop | logs | history | status | exec | pack | release) ;;
+    connect | deploy | restart | stop | logs | history | status | exec | release) ;;
     *)
         print_usage
         die "Invalid verb '$command'"
@@ -529,6 +528,5 @@ case "$command" in
     history) show_history "${2:-1}" ;;
     status) status ;;
     exec) rcon_execute "${*:2}" ;;
-    pack) pack ;;
     release) release "${2:-}" ;;
 esac
