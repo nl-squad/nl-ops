@@ -37,5 +37,5 @@ jobs:
           VPS_PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
         run: |
           (umask 077 && printf '%s\n' "$VPS_PRIVATE_KEY" > "$MYNL_SSH_KEY")
-          .nl-ops/mynl.sh logs 500
+          .nl-ops/mynl.sh logs 500 || true
           .nl-ops/mynl.sh history || true

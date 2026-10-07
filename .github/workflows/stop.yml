@@ -14,9 +14,6 @@ jobs:
   stop:
     name: Stop
     runs-on: ubuntu-latest
-    concurrency:
-      group: nl-ops-${{ inputs.profile }}
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:
