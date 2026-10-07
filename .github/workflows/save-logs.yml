@@ -37,7 +37,5 @@ jobs:
           VPS_PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
         run: |
           (umask 077 && printf '%s\n' "$VPS_PRIVATE_KEY" > "$MYNL_SSH_KEY")
-          failed=0
-          .nl-ops/mynl.sh logs 500 || failed=1
-          .nl-ops/mynl.sh history || failed=1
-          exit "$failed"
+          .nl-ops/mynl.sh logs 500
+          .nl-ops/mynl.sh history || true
