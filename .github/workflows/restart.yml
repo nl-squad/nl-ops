@@ -41,4 +41,6 @@ jobs:
           RCON_PASSWORD: ${{ secrets[format('{0}_RCON_PASSWORD', inputs.profile == 'public' && 'PUBLIC' || 'DEV')] }}
         run: |
           (umask 077 && printf '%s\n' "$VPS_PRIVATE_KEY" > "$MYNL_SSH_KEY")
+          .nl-ops/mynl.sh logs 500 || true
+          .nl-ops/mynl.sh history || true
           .nl-ops/mynl.sh restart

@@ -45,5 +45,5 @@ jobs:
           G_PASSWORD: ${{ secrets[format('{0}_G_PASSWORD', inputs.profile == 'public' && 'PUBLIC' || 'DEV')] }}
         run: |
           (umask 077 && printf '%s\n' "$VPS_PRIVATE_KEY" > "$MYNL_SSH_KEY")
-          .nl-ops/mynl.sh pack
+          if [ -d iwds ]; then .nl-ops/mynl.sh pack; fi
           .nl-ops/mynl.sh deploy
