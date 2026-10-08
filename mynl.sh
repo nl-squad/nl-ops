@@ -383,6 +383,9 @@ pack_iwd() {
     # The .iwd gets the copy start time, so a source edited while packing is still newer next time.
     stamp="iwds/$iwd_name.stamp"
     touch "$stamp"
+    tmp_iwd_path="$(realpath iwds)/$iwd_name.tmp"
+    # A pack killed with kill -9 leaves these behind, and cp or zip would add to them.
+    rm -rf "$temp_dir" "$tmp_iwd_path"
     mkdir -p "$temp_dir"
 
     for subfolder in "$iwd_folder"*/; do
@@ -391,7 +394,6 @@ pack_iwd() {
         done
     done
 
-    tmp_iwd_path="$(realpath iwds)/$iwd_name.tmp"
     find "$temp_dir" -type f -exec touch -t 202201010000.00 {} +
     (cd "$temp_dir" && find . -type f \! -name ".DS_Store" | sort | zip -q -X -r -@ "$tmp_iwd_path")
     rm -rf "$temp_dir"
