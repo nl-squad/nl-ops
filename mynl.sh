@@ -218,7 +218,8 @@ deploy() {
     excludes=$(profile_config 'rsyncExclude // [] | .[]')
     cfg_file=$(profile_config 'cod2.cfgFile // ""')
 
-    rsync_options=(-az --checksum -e "$rsync_ssh" --progress --delete)
+    # The source is ./ so --delete reaches top-level files; top-level dotfiles stay local as before.
+    rsync_options=(-az --checksum -e "$rsync_ssh" --progress --delete "--exclude=/.*")
     while IFS= read -r exclude; do
         if [ -n "$exclude" ]; then
             rsync_options+=("--exclude=$exclude")
@@ -246,7 +247,7 @@ deploy() {
         rsync_options+=("--exclude=/nl/$cfg_file")
     fi
 
-    (cd "$local_path" && rsync "${rsync_options[@]}" ./* "$ssh_target:$remote_path")
+    (cd "$local_path" && rsync "${rsync_options[@]}" ./ "$ssh_target:$remote_path")
 
     if [ -n "$cfg_file" ]; then
         remote_cfg="$remote_path/nl/$cfg_file"
