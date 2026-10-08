@@ -95,22 +95,22 @@ exec_ssh() {
     fi
 }
 
-# Env wins over ./secrets; set-but-empty env counts as unset. Prints nothing when neither has the value.
+# Env wins over ./.env; set-but-empty env counts as unset. Prints nothing when neither has the value.
 secret() {
     local env_name="$1" secrets_name="${profile}_$2"
     if [ -n "${!env_name:-}" ]; then
         printf '%s' "${!env_name}"
-    elif [ -f ./secrets ]; then
+    elif [ -f ./.env ]; then
         # shellcheck source=/dev/null
-        (source ./secrets && printf '%s' "${!secrets_name:-}")
+        (source ./.env && printf '%s' "${!secrets_name:-}")
     fi
 }
 
 missing_secret() {
-    if [ -f ./secrets ]; then
-        die "$2 not set for profile '$profile': set $1 or add ${profile}_$2 to ./secrets."
+    if [ -f ./.env ]; then
+        die "$2 not set for profile '$profile': set $1 or add ${profile}_$2 to ./.env."
     fi
-    die "$1 is not set and ./secrets does not exist."
+    die "$1 is not set and ./.env does not exist."
 }
 
 load_rcon_password() {
@@ -169,8 +169,8 @@ info_value() {
 load_cfg_passwords() {
     load_rcon_password
     g_password=$(secret G_PASSWORD g_password)
-    # A missing g_password in ./secrets means no password; env-only runs must set G_PASSWORD.
-    if [ -z "$g_password" ] && [ ! -f ./secrets ]; then
+    # A missing g_password in ./.env means no password; env-only runs must set G_PASSWORD.
+    if [ -z "$g_password" ] && [ ! -f ./.env ]; then
         missing_secret G_PASSWORD g_password
     fi
 }
@@ -486,7 +486,7 @@ release() {
         die "Version number required to release."
     fi
     if [ -n "${RCON_PASSWORD:-}${G_PASSWORD:-}" ]; then
-        die "release deploys to the public profile; unset RCON_PASSWORD and G_PASSWORD so it reads ./secrets."
+        die "release deploys to the public profile; unset RCON_PASSWORD and G_PASSWORD so it reads ./.env."
     fi
     git fetch --tags origin
     if git rev-parse -q --verify "refs/heads/version/$new_version" > /dev/null \

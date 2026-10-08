@@ -22,7 +22,7 @@ Both read `project-definition.json` from the project directory; start from [samp
 
 The `default` profile is used unless you set another one with `export PROFILE=<name>`.
 
-Passwords for the active profile come from `RCON_PASSWORD` and `G_PASSWORD`, otherwise from `./secrets` (see [secrets-example](secrets-example)). Set `G_PASSWORD=" "` for no password. `release` requires both env vars unset. `MYNL_SSH_KEY` overrides `connection.keyPath`. SSH host keys are pinned in [known_hosts](known_hosts).
+Passwords for the active profile come from `RCON_PASSWORD` and `G_PASSWORD`, otherwise from `./.env` (see [.env.example](.env.example)). Set `G_PASSWORD=" "` for no password. `release` requires both env vars unset. `MYNL_SSH_KEY` overrides `connection.keyPath`. SSH host keys are pinned in [known_hosts](known_hosts).
 
 ## Requirements
 
